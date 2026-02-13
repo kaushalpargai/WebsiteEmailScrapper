@@ -4,17 +4,12 @@ services:
     container_name: youtube-scraper
     restart: unless-stopped
 
-    # Mount checkpoint directory from host
-    volumes:
-      - ./checkpoints:/data/checkpoints
-
     # Load environment variables from .env file
     env_file:
       - .env
 
-    # Ensure environment variable is set correctly
+    # Environment variables
     environment:
-      - CHECKPOINT_DIR=/data/checkpoints
       - NODE_ENV=production
 
     # Logging configuration
