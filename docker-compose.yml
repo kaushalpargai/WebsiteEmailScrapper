@@ -1,0 +1,34 @@
+services:
+  youtube-scraper:
+    build: .
+    container_name: youtube-scraper
+    restart: unless-stopped
+
+    # Mount checkpoint directory from host
+    volumes:
+      - ./checkpoints:/data/checkpoints
+
+    # Load environment variables from .env file
+    env_file:
+      - .env
+
+    # Ensure environment variable is set correctly
+    environment:
+      - CHECKPOINT_DIR=/data/checkpoints
+      - NODE_ENV=production
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Resource limits (optional)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.5'
+    #       memory: 2G
+    #     reservations:
+    #       cpus: '1'
+    #       memory: 1G
