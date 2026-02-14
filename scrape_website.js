@@ -411,6 +411,7 @@ const saveCheckpoint = (id) => {
 
                             let foundEmail = null;
                             let source = null;
+                            let extractedWebsite = null;
 
                             // 1. Try YouTube channel page
                             try {
@@ -447,6 +448,14 @@ const saveCheckpoint = (id) => {
                                     if (foundEmail) source = 'youtube_page';
                                 }
 
+                                // Extract Website from YouTube page if not in DB (or just to have it)
+                                if (!foundEmail) {
+                                    const websites = await extractWebsites(page);
+                                    if (websites.length > 0) {
+                                        extractedWebsite = websites[0];
+                                    }
+                                }
+
                                 await page.close();
                                 await context.close();
                             } catch (e) {
@@ -454,7 +463,10 @@ const saveCheckpoint = (id) => {
                             }
 
                             // 2. Try website if available and no email found
-                            if (!foundEmail && website) {
+                            const targetWebsite = website || extractedWebsite;
+
+                            if (!foundEmail && targetWebsite) {
+                                console.log(`   🌐 Found website: ${targetWebsite}`);
                                 try {
                                     const context = await browser.newContext({
                                         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
@@ -465,7 +477,7 @@ const saveCheckpoint = (id) => {
                                     });
                                     const page = await context.newPage();
 
-                                    await page.goto(website, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                                    await page.goto(targetWebsite, { waitUntil: 'domcontentloaded', timeout: 15000 });
                                     const pageContent = await page.content();
 
                                     const emailMatch = pageContent.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
@@ -479,6 +491,8 @@ const saveCheckpoint = (id) => {
                                 } catch (e) {
                                     console.log(`   ℹ️ Website check failed: ${e.message}`);
                                 }
+                            } else if (!foundEmail && !targetWebsite) {
+                                console.log(`   ❌ No website found on YouTube channel.`);
                             }
 
                             // Store result for batch update
