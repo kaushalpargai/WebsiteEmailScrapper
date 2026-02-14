@@ -169,11 +169,16 @@ docker-compose up -d --build
 
 ## Deployment on Coolify
 
-If you are deploying via Coolify using **Git Source** and **Dockerfile**, follow these steps to ensure data persistence:
+### Option A: Using Docker Compose Build Pack (Recommended)
+If you select **Docker Compose** as the Build Pack:
+1.  Coolify will automatically use the `docker-compose.yml` file.
+2.  Since we defined `volumes: - ./checkpoints:/data/checkpoints` in that file, **Coolify will automatically handle the persistent storage**.
+3.  You typically **do not** need to manually configure storage in the UI, as it reads the compose file.
 
-1.  **Select Build Pack**: Choose **Dockerfile**.
-2.  **Environment Variables**: Add your `.env` variables (Database credentials, etc.) in the Coolify UI.
-3.  **Persistent Storage (Crucial for Checkpoints)**:
+### Option B: Using Dockerfile Build Pack
+If you select **Dockerfile** as the Build Pack:
+1.  **Environment Variables**: Add your `.env` variables (Database credentials, etc.) in the Coolify UI.
+2.  **Persistent Storage (Crucial for Checkpoints)**:
     *   Go to the **Storage** or **Volumes** configuration tab for your service.
     *   Add a new volume.
     *   **Mount Path (inside container)**: `/data/checkpoints`
