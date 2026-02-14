@@ -167,6 +167,19 @@ git pull origin main
 docker-compose up -d --build
 ```
 
+## Deployment on Coolify
+
+If you are deploying via Coolify using **Git Source** and **Dockerfile**, follow these steps to ensure data persistence:
+
+1.  **Select Build Pack**: Choose **Dockerfile**.
+2.  **Environment Variables**: Add your `.env` variables (Database credentials, etc.) in the Coolify UI.
+3.  **Persistent Storage (Crucial for Checkpoints)**:
+    *   Go to the **Storage** or **Volumes** configuration tab for your service.
+    *   Add a new volume.
+    *   **Mount Path (inside container)**: `/data/checkpoints`
+    *   **Host Path**: Leave empty (for auto-managed volume) or specify a path on the host server.
+    *   *Note*: This ensures that `checkpoint.json` is saved to a persistent location and survives container restarts/redeployments.
+
 ## Support
 
 For issues or questions, refer to the main repository documentation or create an issue on GitHub.

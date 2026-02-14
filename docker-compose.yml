@@ -18,7 +18,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # Resource limits (optional)
+
+    # Persist checkpoint data
+    volumes:
+      - ./checkpoints:/data/checkpoints
     # deploy:
     #   resources:
     #     limits:

@@ -1,5 +1,7 @@
 require('dotenv').config();
 const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
 const mysql = require('mysql2/promise');
 
 // --- CONFIG ---
@@ -241,6 +243,56 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
     }
 };
 
+// --- CHECKPOINT LOGIC ---
+const CHECKPOINT_DIR = process.env.CHECKPOINT_DIR || './';
+const CHECKPOINT_FILE = path.join(CHECKPOINT_DIR, 'checkpoint.json');
+
+const getStartingId = async (connection) => {
+    // 1. Check local checkpoint file
+    if (fs.existsSync(CHECKPOINT_FILE)) {
+        try {
+            const data = fs.readFileSync(CHECKPOINT_FILE, 'utf8');
+            const checkpoint = JSON.parse(data);
+            if (checkpoint.last_processed_id) {
+                console.log(`📂 Found checkpoint at ${CHECKPOINT_FILE}. Resuming from ID: ${checkpoint.last_processed_id}`);
+                return checkpoint.last_processed_id;
+            }
+        } catch (e) {
+            console.error(`⚠️ Error reading checkpoint file: ${e.message}`);
+        }
+    } else {
+        console.log(`ℹ️ No checkpoint file found at ${CHECKPOINT_FILE}`);
+    }
+
+    // 2. Fallback to DB (find last successful website scrape)
+    console.log(`⚠️ No local checkpoint found. Checking Database for last 'website' source...`);
+    try {
+        const [rows] = await connection.query(
+            `SELECT id FROM channels WHERE email IS NOT NULL AND source = 'website' ORDER BY id DESC LIMIT 1`
+        );
+
+        if (rows.length > 0) {
+            console.log(`🔄 Found last processed ID in DB: ${rows[0].id}. Resuming from there.`);
+            return rows[0].id;
+        }
+    } catch (e) {
+        console.error(`❌ Error querying DB for checkpoint: ${e.message}`);
+    }
+
+    // 3. Default to 0
+    console.log(`🆕 No checkpoint or DB history found. Starting from ID 0.`);
+    return 0;
+};
+
+const saveCheckpoint = (id) => {
+    try {
+        fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify({ last_processed_id: id }));
+        // console.log(`💾 Checkpoint saved: ID ${id}`);
+    } catch (e) {
+        console.error(`❌ Error saving checkpoint: ${e.message}`);
+    }
+};
+
 // --- MAIN SCRAPER ---
 (async () => {
     let connection;
@@ -248,6 +300,7 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
     let batchNumber = 0;
     let totalProcessed = 0;
     let totalFound = 0;
+    let currentId = 0;
 
     try {
         console.log(`🚀 Database Email Scraper Started (DB-Only Mode - 50 channels per batch)\n`);
@@ -276,16 +329,22 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
             console.log(`   ⚠️ Could not verify column: ${e.message}\n`);
         }
 
+        if (connection) {
+            currentId = await getStartingId(connection);
+        }
+
         let batchContinue = true;
 
         while (batchContinue) {
             batchNumber++;
-            const batchStartTime = Date.now(); // Track batch start time
-            // Fetch next 50 channels with NULL email
-            console.log(`\n📊 Batch ${batchNumber}: Fetching channels with no email (email IS NULL)...`);
+            const batchStartTime = Date.now();
+
+            // Fetch next 50 channels > currentId
+            // We still filter by email IS NULL to optimize, but mostly rely on ID progression
+            console.log(`\n📊 Batch ${batchNumber}: Fetching channels > ID ${currentId}...`);
             const [channels] = await connection.query(
-                `SELECT * FROM channels WHERE email IS NULL LIMIT ?`,
-                [BATCH_SIZE]
+                `SELECT * FROM channels WHERE id > ? AND email IS NULL ORDER BY id ASC LIMIT ?`,
+                [currentId, BATCH_SIZE]
             );
 
             console.log(`   Found ${channels.length} channels to process\n`);
@@ -398,7 +457,7 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
                                 totalFound++;
                             } else {
                                 console.log(`   ❌ No email found`);
-                                batchUpdates.push({ id, email: 'NOT_FOUND', source: 'not_found' });
+                                // batchUpdates.push({ id, email: 'NOT_FOUND', source: 'not_found' }); // REMOVED per user request
                             }
 
                         } catch (error) {
@@ -447,6 +506,14 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
                     console.log(`⚠️ Will retry from this batch on next run\n`);
                     continue; // Skip batch summary and retry this batch
                 }
+            }
+
+            // Update checkpoint/currentId
+            if (channels.length > 0) {
+                const lastChannel = channels[channels.length - 1];
+                currentId = lastChannel.id;
+                saveCheckpoint(currentId);
+                console.log(`📍 Checkpoint updated to ID: ${currentId}`);
             }
 
             // Batch summary
