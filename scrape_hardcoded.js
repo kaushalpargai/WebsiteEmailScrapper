@@ -288,14 +288,28 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
 (async () => {
     console.log(`🚀 Starting Hardcoded Test Scraper for ${CHANNEL_IDS.length} channels...`);
 
-    const browser = await chromium.launch({ headless: true, slowMo: 50 });
+    const browser = await chromium.launch({
+        headless: true,
+        slowMo: 50,
+        args: [
+            '--disable-blink-features=AutomationControlled',
+            '--no-sandbox',
+            '--disable-setuid-sandbox'
+        ]
+    });
     let foundCount = 0;
 
     for (let i = 0; i < CHANNEL_IDS.length; i++) {
         const channelId = CHANNEL_IDS[i];
         console.log(`\n[${i + 1}/${CHANNEL_IDS.length}] Processing Channel ID: ${channelId}`);
 
-        const context = await browser.newContext();
+        const context = await browser.newContext({
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            locale: 'en-US',
+            extraHeaders: {
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+        });
         const page = await context.newPage();
         let foundEmail = null;
         let source = null;
@@ -305,6 +319,21 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
             // 1. Visit YouTube Channel Page
             const youtubeUrl = `https://www.youtube.com/channel/${channelId}/about`;
             await page.goto(youtubeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+            // DEBUG: Log title to see if we are blocked/redirected
+            const pageTitle = await page.title();
+            // console.log(`   📄 Page Title: ${pageTitle}`);
+
+            // CONSENT POPUP HANDLING
+            try {
+                const consentButton = page.locator('button[aria-label="Accept all"], button:has-text("Accept all"), button:has-text("Reject all")').first();
+                if (await consentButton.isVisible()) {
+                    console.log(`   🍪 Consent popup detected. Clicking...`);
+                    await consentButton.click();
+                    await page.waitForTimeout(2000);
+                }
+            } catch (e) { }
+
             await page.waitForTimeout(2000); // Wait for dynamic content
 
             // Check for email on YouTube page
@@ -335,6 +364,9 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
                     }
                 } else {
                     console.log(`   ❌ No website found on YouTube channel.`);
+                    // DEBUG: Log a bit of body text to see what was actually loaded
+                    // const bodyText = await page.innerText('body');
+                    // console.log(`   🕵️‍♂️ Page Body Preview: ${bodyText.substring(0, 100).replace(/\n/g, ' ')}...`);
                 }
             }
 
