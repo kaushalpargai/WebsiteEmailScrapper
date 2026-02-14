@@ -185,6 +185,19 @@ If you select **Dockerfile** as the Build Pack:
     *   **Host Path**: Leave empty (for auto-managed volume) or specify a path on the host server.
     *   *Note*: This ensures that `checkpoint.json` is saved to a persistent location and survives container restarts/redeployments.
 
+### Configuring Database Connection (Environment Variables)
+To connect to a custom database (e.g., Aiven), you must set these **Environment Variables** in your Coolify Service:
+
+*   `DB_HOST`: Database hostname.
+*   `DB_PORT`: Database port (e.g., `26543` for Aiven).
+*   `DB_USER`: Database username.
+*   `DB_PASSWORD`: Database password.
+*   `DB_NAME`: Database name.
+*   `DB_SSL`: Set to `true` to enable SSL (Required for Aiven).
+*   `CHECKPOINT_DIR`: **Optional**. Defaults to `/data/checkpoints`.
+
+> **Note**: The code has been updated to support custom ports and SSL via these variables.
+
 ## Support
 
 For issues or questions, refer to the main repository documentation or create an issue on GitHub.
