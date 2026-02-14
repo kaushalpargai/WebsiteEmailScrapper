@@ -423,8 +423,17 @@ const saveCheckpoint = (id) => {
                                     }
                                 });
                                 const page = await context.newPage();
-                                const youtubeUrl = `https://www.youtube.com/@${channel_id}`;
 
+                                // FORCE ABOUT PAGE: simpler and more reliable for links
+                                // If channel_id starts with UC, it is an ID. Otherwise treat as handle?
+                                // Most reliable is usually just attempting the channel URL + /about
+                                // But scrape_hardcoded uses: https://www.youtube.com/channel/${channelId}/about
+                                let youtubeUrl;
+                                if (channel_id.startsWith('UC')) {
+                                    youtubeUrl = `https://www.youtube.com/channel/${channel_id}/about`;
+                                } else {
+                                    youtubeUrl = `https://www.youtube.com/@${channel_id}/about`;
+                                }
 
                                 await page.goto(youtubeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
