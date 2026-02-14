@@ -44,6 +44,7 @@ RUN npx playwright install
 
 # Copy application files
 COPY scrape_website.js ./
+COPY scrape_hardcoded.js ./
 
 # Create checkpoint directory
 RUN mkdir -p /data/checkpoints
@@ -54,5 +55,5 @@ VOLUME ["/data/checkpoints"]
 # Set environment variable for checkpoint
 ENV CHECKPOINT_DIR=/data/checkpoints
 
-# Run the script
-CMD ["node", "scrape_website.js"]
+# Run the script (Hardcoded Test Mode)
+CMD ["node", "scrape_hardcoded.js"]
