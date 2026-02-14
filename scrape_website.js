@@ -382,7 +382,12 @@ const saveCheckpoint = (id) => {
                 try {
                     browser = await chromium.launch({
                         headless: true,
-                        slowMo: 50
+                        slowMo: 50,
+                        args: [
+                            '--disable-blink-features=AutomationControlled',
+                            '--no-sandbox',
+                            '--disable-setuid-sandbox'
+                        ]
                     });
                     console.log(`✅ Browser launched\n`);
                 } catch (error) {
@@ -409,11 +414,30 @@ const saveCheckpoint = (id) => {
 
                             // 1. Try YouTube channel page
                             try {
-                                const context = await browser.newContext();
+                                const context = await browser.newContext({
+                                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                                    locale: 'en-US',
+                                    extraHeaders: {
+                                        'Accept-Language': 'en-US,en;q=0.9',
+                                    }
+                                });
                                 const page = await context.newPage();
                                 const youtubeUrl = `https://www.youtube.com/@${channel_id}`;
 
+
                                 await page.goto(youtubeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+                                // CONSENT POPUP HANDLING
+                                try {
+                                    const consentButton = page.locator('button[aria-label="Accept all"], button:has-text("Accept all"), button:has-text("Reject all")').first();
+                                    if (await consentButton.isVisible()) {
+                                        // console.log(`   🍪 Consent popup detected. Clicking...`);
+                                        await consentButton.click();
+                                        await page.waitForTimeout(2000);
+                                    }
+                                } catch (e) { }
+
+                                await page.waitForTimeout(2000); // Wait for dynamic content
                                 const pageContent = await page.content();
 
                                 // Extract email from page content
@@ -432,7 +456,13 @@ const saveCheckpoint = (id) => {
                             // 2. Try website if available and no email found
                             if (!foundEmail && website) {
                                 try {
-                                    const context = await browser.newContext();
+                                    const context = await browser.newContext({
+                                        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                                        locale: 'en-US',
+                                        extraHeaders: {
+                                            'Accept-Language': 'en-US,en;q=0.9',
+                                        }
+                                    });
                                     const page = await context.newPage();
 
                                     await page.goto(website, { waitUntil: 'domcontentloaded', timeout: 15000 });

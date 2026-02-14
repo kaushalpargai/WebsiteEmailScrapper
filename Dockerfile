@@ -55,5 +55,5 @@ VOLUME ["/data/checkpoints"]
 # Set environment variable for checkpoint
 ENV CHECKPOINT_DIR=/data/checkpoints
 
-# Run the script (Hardcoded Test Mode)
-CMD ["node", "scrape_hardcoded.js"]
+# Run the script
+CMD ["node", "scrape_website.js"]
