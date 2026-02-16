@@ -45,6 +45,7 @@ RUN npx playwright install
 # Copy application files
 COPY scrape_website.js ./
 COPY scrape_hardcoded.js ./
+COPY utils/ ./utils/
 
 # Create checkpoint directory
 RUN mkdir -p /data/checkpoints
