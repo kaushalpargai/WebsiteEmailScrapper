@@ -118,291 +118,322 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
     try {
         page = await browser.newPage();
 
-        // Try to access the website
         try {
-            await page.goto(websiteUrl, {
-                waitUntil: 'domcontentloaded',
-                timeout: 30000
-            });
+            await page.goto(websiteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         } catch (e) {
             console.log(`      Website timeout/error: ${e.message}`);
             return { email: null, foundVia: null, website: websiteUrl };
         }
-
         await page.waitForTimeout(2500);
 
-        // METHOD 1: Check main page for emails
+        // METHOD 1: Main page
         try {
             const bodyText = await page.innerText('body').catch(() => '');
             let email = isValidEmail(bodyText);
-            if (email) {
-                return { email, foundVia: SOURCES.WEBSITE_MAIN, website: websiteUrl };
+            if (email) return { email, foundVia: SOURCES.WEBSITE_MAIN, website: websiteUrl };
+        } catch (e) { }
+
+        // METHOD 2: Contact pages
+        try {
+            for (const selector of CONTACT_SELECTORS) {
+                try {
+                    const links = await page.locator(selector).all();
+                    for (let i = 0; i < Math.min(links.length, 2); i++) {
+                        let href = await links[i].getAttribute('href').catch(() => null);
+                        if (!href) continue;
+
+                        let fullUrl = href;
+                        if (href.startsWith('/')) {
+                            // fullUrl = new URL(websiteUrl).origin + href;
+                            // Use safer URL construction
+                            try {
+                                fullUrl = new URL(href, websiteUrl).href;
+                            } catch (e) { continue; }
+                        } else if (!href.startsWith('http')) {
+                            continue;
+                        }
+
+                        // Just check first contact page found
+                        await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { });
+                        await page.waitForTimeout(2000);
+                        const contactText = await page.innerText('body').catch(() => '');
+                        const email = isValidEmail(contactText);
+                        if (email) return { email, foundVia: SOURCES.WEBSITE_CONTACT, website: websiteUrl };
+                    }
+                } catch (e) { }
             }
         } catch (e) { }
 
-        // METHOD 2: Look for and click contact/about/help links
+        // METHOD 3: Mailto
         try {
-            // METHOD 2: Look for and click contact/about/help links
-            try {
-                // const contactSelectors = CONTACT_SELECTORS; // Already imported
-
-                for (const selector of CONTACT_SELECTORS) {
-                    try {
-                        const links = await page.locator(selector).all();
-                        for (let i = 0; i < Math.min(links.length, 2); i++) {
-                            try {
-                                const href = await links[i].getAttribute('href').catch(() => null);
-                                if (!href) continue;
-
-                                // Handle relative URLs
-                                let fullUrl = href;
-                                if (href.startsWith('/')) {
-                                    const baseUrl = new URL(websiteUrl);
-                                    fullUrl = baseUrl.origin + href;
-                                }
-
-                                // Navigate to contact page
-                                await page.goto(fullUrl, {
-                                    waitUntil: 'domcontentloaded',
-                                    timeout: 15000
-                                }).catch(() => { });
-
-                                await page.waitForTimeout(2000);
-
-                                // Check contact page for emails
-                                const contactText = await page.innerText('body').catch(() => '');
-                                const email = isValidEmail(contactText);
-                                if (email) {
-                                    return { email, foundVia: "website_contact", website: websiteUrl };
-                                }
-                            } catch (e) { }
-                        }
-                    } catch (e) { }
-                }
-            } catch (e) { }
-
-            // METHOD 3: Check for mailto links
-            try {
-                const mailtoLinks = await page.locator('a[href^="mailto:"]').all();
-                for (const link of mailtoLinks) {
-                    const href = await link.getAttribute('href').catch(() => '');
-                    const email = isValidEmail(href);
-                    if (email) {
-                        return { email, foundVia: "website_mailto", website: websiteUrl };
-                    }
-                }
-            } catch (e) { }
-
-            // METHOD 4: Go back to main page and do full HTML scan
-            try {
-                await page.goto(websiteUrl, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 15000
-                }).catch(() => { });
-
-                const htmlContent = await page.content().catch(() => '');
-                const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
-                const matches = htmlContent.match(emailRegex) || [];
-
-                // Sort by common patterns (support@, contact@, info@, hello@)
-                const priorityPatterns = ['support@', 'contact@', 'info@', 'hello@', 'team@', 'business@', 'inquiry@'];
-                for (const pattern of priorityPatterns) {
-                    const match = matches.find(e => e.toLowerCase().includes(pattern));
-                    if (match) {
-                        const email = isValidEmail(match);
-                        if (email) {
-                            return { email, foundVia: SOURCES.WEBSITE_HTML, website: websiteUrl };
-                        }
-                    }
-                }
-
-                // Return first valid email if no priority pattern matched
-                if (matches.length > 0) {
-                    const email = isValidEmail(matches[0]);
-                    if (email) {
-                        return { email, foundVia: SOURCES.WEBSITE_HTML, website: websiteUrl };
-                    }
-                }
-            } catch (e) { }
-
-            return { email: null, foundVia: null, website: websiteUrl };
-
-        } catch (error) {
-            return { email: null, foundVia: null, website: websiteUrl, error: error.message };
-        } finally {
-            if (page) await page.close().catch(() => { });
-        }
-    };
-
-    // --- CHECKPOINT LOGIC ---
-    const CHECKPOINT_DIR = process.env.CHECKPOINT_DIR || './';
-    const CHECKPOINT_FILE = path.join(CHECKPOINT_DIR, 'checkpoint.json');
-
-    const getStartingId = async (connection) => {
-        // 1. Check local checkpoint file
-        if (fs.existsSync(CHECKPOINT_FILE)) {
-            try {
-                const data = fs.readFileSync(CHECKPOINT_FILE, 'utf8');
-                const checkpoint = JSON.parse(data);
-                if (checkpoint.last_processed_id) {
-                    console.log(`📂 Found checkpoint at ${CHECKPOINT_FILE}. Resuming from ID: ${checkpoint.last_processed_id}`);
-                    return checkpoint.last_processed_id;
-                }
-            } catch (e) {
-                console.error(`⚠️ Error reading checkpoint file: ${e.message}`);
+            const mailto = await page.getAttribute('a[href^="mailto:"]', 'href').catch(() => null);
+            if (mailto) {
+                const email = isValidEmail(mailto);
+                if (email) return { email, foundVia: SOURCES.WEBSITE_MAILTO, website: websiteUrl };
             }
-        } else {
-            console.log(`ℹ️ No checkpoint file found at ${CHECKPOINT_FILE}`);
-        }
+        } catch (e) { }
 
-        // 2. Fallback to DB (find last successful website scrape)
-        console.log(`⚠️ No local checkpoint found. Checking Database for last 'website' source...`);
+        // METHOD 4: Full HTML scan
         try {
-            const [rows] = await connection.query(
-                `SELECT id FROM channels WHERE email IS NOT NULL AND source = 'website' ORDER BY id DESC LIMIT 1`
+            const htmlContent = await page.content().catch(() => '');
+            const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
+            const matches = htmlContent.match(emailRegex) || [];
+
+            const priorityPatterns = PRIORITY_PATTERNS; // Already imported? Yes.
+            for (const pattern of priorityPatterns) {
+                const match = matches.find(e => e.toLowerCase().includes(pattern));
+                if (match) {
+                    const email = isValidEmail(match);
+                    if (email) return { email, foundVia: SOURCES.WEBSITE_HTML, website: websiteUrl };
+                }
+            }
+
+            if (matches.length > 0) {
+                const email = isValidEmail(matches[0]);
+                if (email) return { email, foundVia: SOURCES.WEBSITE_HTML, website: websiteUrl };
+            }
+        } catch (e) { }
+
+        return { email: null, foundVia: null, website: websiteUrl };
+
+    } catch (error) {
+        return { email: null, foundVia: null, website: websiteUrl, error: error.message };
+    } finally {
+        if (page) await page.close().catch(() => { });
+    }
+};
+
+// --- CHECKPOINT LOGIC ---
+const CHECKPOINT_DIR = process.env.CHECKPOINT_DIR || './';
+const CHECKPOINT_FILE = path.join(CHECKPOINT_DIR, 'checkpoint.json');
+
+const getStartingId = async (connection) => {
+    // 1. Check local checkpoint file
+    if (fs.existsSync(CHECKPOINT_FILE)) {
+        try {
+            const data = fs.readFileSync(CHECKPOINT_FILE, 'utf8');
+            const checkpoint = JSON.parse(data);
+            if (checkpoint.last_processed_id) {
+                console.log(`📂 Found checkpoint at ${CHECKPOINT_FILE}. Resuming from ID: ${checkpoint.last_processed_id}`);
+                return checkpoint.last_processed_id;
+            }
+        } catch (e) {
+            console.error(`⚠️ Error reading checkpoint file: ${e.message}`);
+        }
+    } else {
+        console.log(`ℹ️ No checkpoint file found at ${CHECKPOINT_FILE}`);
+    }
+
+    // 2. Fallback to DB (find last successful website scrape)
+    console.log(`⚠️ No local checkpoint found. Checking Database for last 'website' source...`);
+    try {
+        const [rows] = await connection.query(
+            `SELECT id FROM channels WHERE email IS NOT NULL AND source = 'website' ORDER BY id DESC LIMIT 1`
+        );
+
+        if (rows.length > 0) {
+            console.log(`🔄 Found last processed ID in DB: ${rows[0].id}. Resuming from there.`);
+            return rows[0].id;
+        }
+    } catch (e) {
+        console.error(`❌ Error querying DB for checkpoint: ${e.message}`);
+    }
+
+    // 3. Default to 0
+    console.log(`🆕 No checkpoint or DB history found. Starting from ID 0.`);
+    return 0;
+};
+
+const saveCheckpoint = (id) => {
+    try {
+        fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify({ last_processed_id: id }));
+        // console.log(`💾 Checkpoint saved: ID ${id}`);
+    } catch (e) {
+        console.error(`❌ Error saving checkpoint: ${e.message}`);
+    }
+};
+
+// --- MAIN SCRAPER ---
+(async () => {
+    let connection;
+    let browser;
+    let batchNumber = 0;
+    let totalProcessed = 0;
+    let totalFound = 0;
+    let currentId = 0;
+
+    try {
+        console.log(`🚀 Database Email Scraper Started (DB-Only Mode - 50 channels per batch)\n`);
+        console.log(`🗄️ Connecting to MySQL database...`);
+
+        // Create connection pool
+        const pool = await mysql.createPool(DB_CONFIG);
+        connection = await pool.getConnection();
+        console.log(`✅ Connected to database: ${DB_CONFIG.database}\n`);
+
+        // Check if source column exists
+        console.log(`📋 Checking table structure...`);
+        try {
+            const [columns] = await connection.query(
+                `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'channels' AND COLUMN_NAME = 'source'`
             );
 
-            if (rows.length > 0) {
-                console.log(`🔄 Found last processed ID in DB: ${rows[0].id}. Resuming from there.`);
-                return rows[0].id;
+            if (columns.length === 0) {
+                console.log(`   ➕ Adding 'source' column to channels table...`);
+                await connection.query(`ALTER TABLE channels ADD COLUMN source VARCHAR(255) DEFAULT NULL`);
+                console.log(`   ✅ Column 'source' added\n`);
+            } else {
+                console.log(`   ✅ Column 'source' already exists\n`);
             }
         } catch (e) {
-            console.error(`❌ Error querying DB for checkpoint: ${e.message}`);
+            console.log(`   ⚠️ Could not verify column: ${e.message}\n`);
         }
 
-        // 3. Default to 0
-        console.log(`🆕 No checkpoint or DB history found. Starting from ID 0.`);
-        return 0;
-    };
-
-    const saveCheckpoint = (id) => {
-        try {
-            fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify({ last_processed_id: id }));
-            // console.log(`💾 Checkpoint saved: ID ${id}`);
-        } catch (e) {
-            console.error(`❌ Error saving checkpoint: ${e.message}`);
+        if (connection) {
+            currentId = await getStartingId(connection);
         }
-    };
 
-    // --- MAIN SCRAPER ---
-    (async () => {
-        let connection;
-        let browser;
-        let batchNumber = 0;
-        let totalProcessed = 0;
-        let totalFound = 0;
-        let currentId = 0;
+        let batchContinue = true;
 
-        try {
-            console.log(`🚀 Database Email Scraper Started (DB-Only Mode - 50 channels per batch)\n`);
-            console.log(`🗄️ Connecting to MySQL database...`);
+        while (batchContinue) {
+            batchNumber++;
+            const batchStartTime = Date.now();
 
-            // Create connection pool
-            const pool = await mysql.createPool(DB_CONFIG);
-            connection = await pool.getConnection();
-            console.log(`✅ Connected to database: ${DB_CONFIG.database}\n`);
+            // Fetch next 50 channels > currentId
+            // We still filter by email IS NULL to optimize, but mostly rely on ID progression
+            console.log(`\n📊 Batch ${batchNumber}: Fetching channels > ID ${currentId}...`);
+            const [channels] = await connection.query(
+                `SELECT * FROM channels WHERE id > ? AND email IS NULL ORDER BY id ASC LIMIT ?`,
+                [currentId, BATCH_SIZE]
+            );
 
-            // Check if source column exists
-            console.log(`📋 Checking table structure...`);
+            console.log(`   Found ${channels.length} channels to process\n`);
+
+            if (channels.length === 0) {
+                console.log(`⏸️  No channels with missing emails found.`);
+                console.log(`\n📊 CURRENT STATUS:`);
+                console.log(`   Batches completed: ${batchNumber - 1}`);
+                console.log(`   Total channels processed: ${totalProcessed}`);
+                console.log(`   Total emails found: ${totalFound}\n`);
+
+                // Check final counts from DB
+                const [totalCount] = await connection.query(`SELECT COUNT(*) as count FROM channels`);
+                const [foundCount] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email IS NOT NULL AND email != 'NOT_FOUND'`);
+
+                console.log(`   Total channels in DB: ${totalCount[0].count}`);
+                console.log(`   Channels with email: ${foundCount[0].count}`);
+                console.log(`   Channels remaining: ${totalCount[0].count - foundCount[0].count}\n`);
+
+                console.log(`🔄 Waiting ${WAIT_INTERVAL / 1000 / 60} minutes before checking again...\n`);
+                await new Promise(r => setTimeout(r, WAIT_INTERVAL));
+                continue; // Check again
+            }
+
+            // Process channels
+            console.log(`🔄 Launching Chromium browser for batch...`);
+            const batchUpdates = [];
+            let batchProcessedCount = 0;
+            let batchFoundCount = 0;
+            let batchBrowserError = false;
+
             try {
-                const [columns] = await connection.query(
-                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'channels' AND COLUMN_NAME = 'source'`
-                );
-
-                if (columns.length === 0) {
-                    console.log(`   ➕ Adding 'source' column to channels table...`);
-                    await connection.query(`ALTER TABLE channels ADD COLUMN source VARCHAR(255) DEFAULT NULL`);
-                    console.log(`   ✅ Column 'source' added\n`);
-                } else {
-                    console.log(`   ✅ Column 'source' already exists\n`);
-                }
-            } catch (e) {
-                console.log(`   ⚠️ Could not verify column: ${e.message}\n`);
-            }
-
-            if (connection) {
-                currentId = await getStartingId(connection);
-            }
-
-            let batchContinue = true;
-
-            while (batchContinue) {
-                batchNumber++;
-                const batchStartTime = Date.now();
-
-                // Fetch next 50 channels > currentId
-                // We still filter by email IS NULL to optimize, but mostly rely on ID progression
-                console.log(`\n📊 Batch ${batchNumber}: Fetching channels > ID ${currentId}...`);
-                const [channels] = await connection.query(
-                    `SELECT * FROM channels WHERE id > ? AND email IS NULL ORDER BY id ASC LIMIT ?`,
-                    [currentId, BATCH_SIZE]
-                );
-
-                console.log(`   Found ${channels.length} channels to process\n`);
-
-                if (channels.length === 0) {
-                    console.log(`⏸️  No channels with missing emails found.`);
-                    console.log(`\n📊 CURRENT STATUS:`);
-                    console.log(`   Batches completed: ${batchNumber - 1}`);
-                    console.log(`   Total channels processed: ${totalProcessed}`);
-                    console.log(`   Total emails found: ${totalFound}\n`);
-
-                    // Check final counts from DB
-                    const [totalCount] = await connection.query(`SELECT COUNT(*) as count FROM channels`);
-                    const [foundCount] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email IS NOT NULL AND email != 'NOT_FOUND'`);
-
-                    console.log(`   Total channels in DB: ${totalCount[0].count}`);
-                    console.log(`   Channels with email: ${foundCount[0].count}`);
-                    console.log(`   Channels remaining: ${totalCount[0].count - foundCount[0].count}\n`);
-
-                    console.log(`🔄 Waiting ${WAIT_INTERVAL / 1000 / 60} minutes before checking again...\n`);
-                    await new Promise(r => setTimeout(r, WAIT_INTERVAL));
-                    continue; // Check again
-                }
-
-                // Process channels
-                console.log(`🔄 Launching Chromium browser for batch...`);
-                const batchUpdates = [];
-                let batchProcessedCount = 0;
-                let batchFoundCount = 0;
-                let batchBrowserError = false;
-
                 try {
-                    try {
-                        browser = await chromium.launch({
-                            headless: true,
-                            slowMo: 50,
-                            args: [
-                                '--disable-blink-features=AutomationControlled',
-                                '--no-sandbox',
-                                '--disable-setuid-sandbox'
-                            ]
-                        });
-                        console.log(`✅ Browser launched\n`);
-                    } catch (error) {
-                        console.error(`❌ Browser launch error: ${error.message}`);
-                        batchBrowserError = true;
+                    browser = await chromium.launch({
+                        headless: true,
+                        slowMo: 50,
+                        args: [
+                            '--disable-blink-features=AutomationControlled',
+                            '--no-sandbox',
+                            '--disable-setuid-sandbox'
+                        ]
+                    });
+                    console.log(`✅ Browser launched\n`);
+                } catch (error) {
+                    console.error(`❌ Browser launch error: ${error.message}`);
+                    batchBrowserError = true;
+                }
+
+                if (batchBrowserError) {
+                    // Skip this batch and mark all as NOT_FOUND due to browser error
+                    for (const channel of channels) {
+                        batchUpdates.push({ id: channel.id, email: SOURCES.NOT_FOUND, source: SOURCES.BROWSER_ERROR });
                     }
+                } else {
+                    for (let i = 0; i < channels.length; i++) {
+                        const { id, channel_id, channel_name, website } = channels[i];
+                        batchProcessedCount++;
+                        totalProcessed++;
 
-                    if (batchBrowserError) {
-                        // Skip this batch and mark all as NOT_FOUND due to browser error
-                        for (const channel of channels) {
-                            batchUpdates.push({ id: channel.id, email: SOURCES.NOT_FOUND, source: SOURCES.BROWSER_ERROR });
-                        }
-                    } else {
-                        for (let i = 0; i < channels.length; i++) {
-                            const { id, channel_id, channel_name, website } = channels[i];
-                            batchProcessedCount++;
-                            totalProcessed++;
+                        try {
+                            console.log(`[${i + 1}/${channels.length}] Processing: ${channel_name} (ID: ${id})`);
 
+                            let foundEmail = null;
+                            let source = null;
+                            let extractedWebsite = null;
+
+                            // 1. Try YouTube channel page
                             try {
-                                console.log(`[${i + 1}/${channels.length}] Processing: ${channel_name} (ID: ${id})`);
+                                const context = await browser.newContext({
+                                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                                    locale: 'en-US',
+                                    extraHeaders: {
+                                        'Accept-Language': 'en-US,en;q=0.9',
+                                    }
+                                });
+                                const page = await context.newPage();
 
-                                let foundEmail = null;
-                                let source = null;
-                                let extractedWebsite = null;
+                                // FORCE ABOUT PAGE: simpler and more reliable for links
+                                // If channel_id starts with UC, it is an ID. Otherwise treat as handle?
+                                // Most reliable is usually just attempting the channel URL + /about
+                                // But scrape_hardcoded uses: https://www.youtube.com/channel/${channelId}/about
+                                let youtubeUrl;
+                                if (channel_id.startsWith('UC')) {
+                                    youtubeUrl = `https://www.youtube.com/channel/${channel_id}/about`;
+                                } else {
+                                    youtubeUrl = `https://www.youtube.com/@${channel_id}/about`;
+                                }
 
-                                // 1. Try YouTube channel page
+                                await page.goto(youtubeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+                                // CONSENT POPUP HANDLING
+                                try {
+                                    const consentButton = page.locator('button[aria-label="Accept all"], button:has-text("Accept all"), button:has-text("Reject all")').first();
+                                    if (await consentButton.isVisible()) {
+                                        // console.log(`   🍪 Consent popup detected. Clicking...`);
+                                        await consentButton.click();
+                                        await page.waitForTimeout(2000);
+                                    }
+                                } catch (e) { }
+
+                                await page.waitForTimeout(2000); // Wait for dynamic content
+                                const pageContent = await page.content();
+
+                                // Extract email from page content
+                                const emailMatch = pageContent.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
+                                if (emailMatch) {
+                                    foundEmail = isValidEmail(emailMatch[0]);
+                                    if (foundEmail) source = SOURCES.YOUTUBE_PAGE;
+                                }
+
+                                // Extract Website from YouTube page if not in DB (or just to have it)
+                                if (!foundEmail) {
+                                    const websites = await extractWebsites(page);
+                                    if (websites.length > 0) {
+                                        extractedWebsite = websites[0];
+                                    }
+                                }
+
+                                await page.close();
+                                await context.close();
+                            } catch (e) {
+                                console.log(`   ℹ️ YouTube page check failed: ${e.message}`);
+                            }
+
+                            // 2. Try website if available and no email found
+                            const targetWebsite = website || extractedWebsite;
+
+                            if (!foundEmail && targetWebsite) {
+                                console.log(`   🌐 Found website: ${targetWebsite}`);
                                 try {
                                     const context = await browser.newContext({
                                         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
@@ -413,199 +444,137 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl, maxRetries = 3) => {
                                     });
                                     const page = await context.newPage();
 
-                                    // FORCE ABOUT PAGE: simpler and more reliable for links
-                                    // If channel_id starts with UC, it is an ID. Otherwise treat as handle?
-                                    // Most reliable is usually just attempting the channel URL + /about
-                                    // But scrape_hardcoded uses: https://www.youtube.com/channel/${channelId}/about
-                                    let youtubeUrl;
-                                    if (channel_id.startsWith('UC')) {
-                                        youtubeUrl = `https://www.youtube.com/channel/${channel_id}/about`;
-                                    } else {
-                                        youtubeUrl = `https://www.youtube.com/@${channel_id}/about`;
-                                    }
-
-                                    await page.goto(youtubeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-
-                                    // CONSENT POPUP HANDLING
-                                    try {
-                                        const consentButton = page.locator('button[aria-label="Accept all"], button:has-text("Accept all"), button:has-text("Reject all")').first();
-                                        if (await consentButton.isVisible()) {
-                                            // console.log(`   🍪 Consent popup detected. Clicking...`);
-                                            await consentButton.click();
-                                            await page.waitForTimeout(2000);
-                                        }
-                                    } catch (e) { }
-
-                                    await page.waitForTimeout(2000); // Wait for dynamic content
+                                    await page.goto(targetWebsite, { waitUntil: 'domcontentloaded', timeout: 15000 });
                                     const pageContent = await page.content();
 
-                                    // Extract email from page content
                                     const emailMatch = pageContent.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
                                     if (emailMatch) {
                                         foundEmail = isValidEmail(emailMatch[0]);
-                                        if (foundEmail) source = SOURCES.YOUTUBE_PAGE;
-                                    }
-
-                                    // Extract Website from YouTube page if not in DB (or just to have it)
-                                    if (!foundEmail) {
-                                        const websites = await extractWebsites(page);
-                                        if (websites.length > 0) {
-                                            extractedWebsite = websites[0];
-                                        }
+                                        if (foundEmail) source = SOURCES.WEBSITE;
                                     }
 
                                     await page.close();
                                     await context.close();
                                 } catch (e) {
-                                    console.log(`   ℹ️ YouTube page check failed: ${e.message}`);
+                                    console.log(`   ℹ️ Website check failed: ${e.message}`);
                                 }
-
-                                // 2. Try website if available and no email found
-                                const targetWebsite = website || extractedWebsite;
-
-                                if (!foundEmail && targetWebsite) {
-                                    console.log(`   🌐 Found website: ${targetWebsite}`);
-                                    try {
-                                        const context = await browser.newContext({
-                                            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                                            locale: 'en-US',
-                                            extraHeaders: {
-                                                'Accept-Language': 'en-US,en;q=0.9',
-                                            }
-                                        });
-                                        const page = await context.newPage();
-
-                                        await page.goto(targetWebsite, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                                        const pageContent = await page.content();
-
-                                        const emailMatch = pageContent.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
-                                        if (emailMatch) {
-                                            foundEmail = isValidEmail(emailMatch[0]);
-                                            if (foundEmail) source = SOURCES.WEBSITE;
-                                        }
-
-                                        await page.close();
-                                        await context.close();
-                                    } catch (e) {
-                                        console.log(`   ℹ️ Website check failed: ${e.message}`);
-                                    }
-                                } else if (!foundEmail && !targetWebsite) {
-                                    console.log(`   ❌ No website found on YouTube channel.`);
-                                }
-
-                                // Store result for batch update
-                                if (foundEmail) {
-                                    console.log(`   ✅ Email found: ${foundEmail} (source: ${source})`);
-                                    batchUpdates.push({ id, email: foundEmail, source });
-                                    batchFoundCount++;
-                                    totalFound++;
-                                } else {
-                                    console.log(`   ❌ No email found`);
-                                    // batchUpdates.push({ id, email: 'NOT_FOUND', source: 'not_found' }); // REMOVED per user request
-                                }
-
-                            } catch (error) {
-                                console.error(`   ❌ Error: ${error.message}`);
-                                batchUpdates.push({ id, email: SOURCES.NOT_FOUND, source: SOURCES.ERROR });
+                            } else if (!foundEmail && !targetWebsite) {
+                                console.log(`   ❌ No website found on YouTube channel.`);
                             }
 
-                            // Delay between requests
-                            if (i < channels.length - 1) {
-                                await new Promise(r => setTimeout(r, 1000));
+                            // Store result for batch update
+                            if (foundEmail) {
+                                console.log(`   ✅ Email found: ${foundEmail} (source: ${source})`);
+                                batchUpdates.push({ id, email: foundEmail, source });
+                                batchFoundCount++;
+                                totalFound++;
+                            } else {
+                                console.log(`   ❌ No email found`);
+                                // batchUpdates.push({ id, email: 'NOT_FOUND', source: 'not_found' }); // REMOVED per user request
                             }
-                        }
-                    }
 
-                    // Close browser after batch processing
-                    if (browser) {
-                        await browser.close();
-                        console.log(`\n🔒 Browser closed\n`);
-                    }
-
-                } catch (error) {
-                    console.error(`❌ Browser error: ${error.message}`);
-                    if (browser) await browser.close().catch(() => { });
-                }
-
-                // BATCH DATABASE UPDATE (all at once after processing all 50)
-                if (batchUpdates.length > 0) {
-                    console.log(`\n💾 Updating database with ${batchUpdates.length} channel(s)...`);
-                    try {
-                        // Use transaction for atomicity
-                        await connection.beginTransaction();
-
-                        for (const update of batchUpdates) {
-                            await connection.query(
-                                `UPDATE channels SET email = ?, source = ? WHERE id = ?`,
-                                [update.email, update.source, update.id]
-                            );
+                        } catch (error) {
+                            console.error(`   ❌ Error: ${error.message}`);
+                            batchUpdates.push({ id, email: SOURCES.NOT_FOUND, source: SOURCES.ERROR });
                         }
 
-                        await connection.commit();
-                        console.log(`✅ Database updated successfully with ${batchUpdates.length} channel(s)`);
-                    } catch (error) {
-                        await connection.rollback();
-                        console.error(`❌ Database update failed: ${error.message}`);
-                        console.log(`⚠️ Rolling back transaction...`);
-                        console.log(`⚠️ Will retry from this batch on next run\n`);
-                        continue; // Skip batch summary and retry this batch
+                        // Delay between requests
+                        if (i < channels.length - 1) {
+                            await new Promise(r => setTimeout(r, 1000));
+                        }
                     }
                 }
 
-                // Update checkpoint/currentId
-                if (channels.length > 0) {
-                    const lastChannel = channels[channels.length - 1];
-                    currentId = lastChannel.id;
-                    saveCheckpoint(currentId);
-                    console.log(`📍 Checkpoint updated to ID: ${currentId}`);
+                // Close browser after batch processing
+                if (browser) {
+                    await browser.close();
+                    console.log(`\n🔒 Browser closed\n`);
                 }
 
-                // Batch summary
-                const batchEndTime = Date.now();
-                const batchDuration = ((batchEndTime - batchStartTime) / 1000).toFixed(2); // Duration in seconds
-                const batchDurationMinutes = (batchDuration / 60).toFixed(2); // Duration in minutes
-
-                console.log(`\n✅ Batch ${batchNumber} processing complete!`);
-                console.log(`\n📊 BATCH SUMMARY:`);
-                console.log(`   Processed in this batch: ${batchProcessedCount}`);
-                console.log(`   ✅ Emails Found in batch: ${batchFoundCount}`);
-                console.log(`   Success Rate (batch): ${((batchFoundCount / batchProcessedCount) * 100).toFixed(2)}%`);
-                console.log(`   ⏱️ Time taken: ${batchDurationMinutes} minutes (${batchDuration} seconds)`);
-                console.log(`\n📊 OVERALL SUMMARY:`);
-                console.log(`   Batches completed: ${batchNumber}`);
-                console.log(`   Total channels processed: ${totalProcessed}`);
-                console.log(`   Total emails found: ${totalFound}`);
-                console.log(`   Success Rate (overall): ${((totalFound / totalProcessed) * 100).toFixed(2)}%\n`);
+            } catch (error) {
+                console.error(`❌ Browser error: ${error.message}`);
+                if (browser) await browser.close().catch(() => { });
             }
 
-            console.log(`\n🎉 SCRAPER COMPLETED!`);
-            console.log(`📊 FINAL SUMMARY:`);
-            console.log(`   Total batches: ${batchNumber}`);
+            // BATCH DATABASE UPDATE (all at once after processing all 50)
+            if (batchUpdates.length > 0) {
+                console.log(`\n💾 Updating database with ${batchUpdates.length} channel(s)...`);
+                try {
+                    // Use transaction for atomicity
+                    await connection.beginTransaction();
+
+                    for (const update of batchUpdates) {
+                        await connection.query(
+                            `UPDATE channels SET email = ?, source = ? WHERE id = ?`,
+                            [update.email, update.source, update.id]
+                        );
+                    }
+
+                    await connection.commit();
+                    console.log(`✅ Database updated successfully with ${batchUpdates.length} channel(s)`);
+                } catch (error) {
+                    await connection.rollback();
+                    console.error(`❌ Database update failed: ${error.message}`);
+                    console.log(`⚠️ Rolling back transaction...`);
+                    console.log(`⚠️ Will retry from this batch on next run\n`);
+                    continue; // Skip batch summary and retry this batch
+                }
+            }
+
+            // Update checkpoint/currentId
+            if (channels.length > 0) {
+                const lastChannel = channels[channels.length - 1];
+                currentId = lastChannel.id;
+                saveCheckpoint(currentId);
+                console.log(`📍 Checkpoint updated to ID: ${currentId}`);
+            }
+
+            // Batch summary
+            const batchEndTime = Date.now();
+            const batchDuration = ((batchEndTime - batchStartTime) / 1000).toFixed(2); // Duration in seconds
+            const batchDurationMinutes = (batchDuration / 60).toFixed(2); // Duration in minutes
+
+            console.log(`\n✅ Batch ${batchNumber} processing complete!`);
+            console.log(`\n📊 BATCH SUMMARY:`);
+            console.log(`   Processed in this batch: ${batchProcessedCount}`);
+            console.log(`   ✅ Emails Found in batch: ${batchFoundCount}`);
+            console.log(`   Success Rate (batch): ${((batchFoundCount / batchProcessedCount) * 100).toFixed(2)}%`);
+            console.log(`   ⏱️ Time taken: ${batchDurationMinutes} minutes (${batchDuration} seconds)`);
+            console.log(`\n📊 OVERALL SUMMARY:`);
+            console.log(`   Batches completed: ${batchNumber}`);
             console.log(`   Total channels processed: ${totalProcessed}`);
             console.log(`   Total emails found: ${totalFound}`);
-
-            // Get final counts from DB
-            const [finalCount] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email IS NOT NULL AND email != 'NOT_FOUND'`);
-            const [notFoundCount] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email = 'NOT_FOUND'`);
-            const [stillNull] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email IS NULL`);
-
-            console.log(`\n📊 DATABASE FINAL COUNT:`);
-            console.log(`   Channels with email: ${finalCount[0].count}`);
-            console.log(`   Channels marked as NOT_FOUND: ${notFoundCount[0].count}`);
-            console.log(`   Channels still with NULL email: ${stillNull[0].count}\n`);
-
-            connection.release();
-            await pool.end();
-
-        } catch (error) {
-            console.error(`❌ Fatal error: ${error.message}`);
-            console.log(`\n💾 Progress saved in database. You can resume by running the script again.`);
-        } finally {
-            if (browser) {
-                await browser.close().catch(() => { });
-            }
-            if (connection) {
-                connection.release();
-            }
+            console.log(`   Success Rate (overall): ${((totalFound / totalProcessed) * 100).toFixed(2)}%\n`);
         }
-    })();
+
+        console.log(`\n🎉 SCRAPER COMPLETED!`);
+        console.log(`📊 FINAL SUMMARY:`);
+        console.log(`   Total batches: ${batchNumber}`);
+        console.log(`   Total channels processed: ${totalProcessed}`);
+        console.log(`   Total emails found: ${totalFound}`);
+
+        // Get final counts from DB
+        const [finalCount] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email IS NOT NULL AND email != 'NOT_FOUND'`);
+        const [notFoundCount] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email = 'NOT_FOUND'`);
+        const [stillNull] = await connection.query(`SELECT COUNT(*) as count FROM channels WHERE email IS NULL`);
+
+        console.log(`\n📊 DATABASE FINAL COUNT:`);
+        console.log(`   Channels with email: ${finalCount[0].count}`);
+        console.log(`   Channels marked as NOT_FOUND: ${notFoundCount[0].count}`);
+        console.log(`   Channels still with NULL email: ${stillNull[0].count}\n`);
+
+        connection.release();
+        await pool.end();
+
+    } catch (error) {
+        console.error(`❌ Fatal error: ${error.message}`);
+        console.log(`\n💾 Progress saved in database. You can resume by running the script again.`);
+    } finally {
+        if (browser) {
+            await browser.close().catch(() => { });
+        }
+        if (connection) {
+            connection.release();
+        }
+    }
+})();
