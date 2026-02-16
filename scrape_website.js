@@ -29,7 +29,7 @@ const isValidEmail = (text) => {
     // File extensions to exclude
     const fileExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.pdf', '.doc', '.docx', '.zip', '.rar', '.mp3', '.mp4', '.avi', '.mov', '.exe', '.dll', '.iso', '.dmg', '.apk'];
 
-    return matches.find(e => {
+    const foundEmail = matches.find(e => {
         const lowerEmail = e.toLowerCase();
         return !lowerEmail.includes('example') &&
             !lowerEmail.includes('sentry') &&
@@ -37,7 +37,14 @@ const isValidEmail = (text) => {
             !lowerEmail.includes('noreply') &&
             !lowerEmail.includes('no-reply') &&
             !fileExtensions.some(ext => lowerEmail.includes(ext));
-    }) || null;
+    });
+
+    if (foundEmail) {
+        // Remove 'mail_' or 'mail-' prefix (case insensitive)
+        return foundEmail.replace(/^mail[_-]+/i, '');
+    }
+
+    return null;
 };
 
 const isValidWebsite = (url) => {
@@ -48,7 +55,7 @@ const isValidWebsite = (url) => {
 
         // Exclude social media and YouTube
         const excludedDomains = [
-            'youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 'x.com',
+            'youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 'x.com', 'kick.com',
             'instagram.com', 'tiktok.com', 'discord.gg', 'twitch.tv', 'reddit.com',
             'linkedin.com', 'pinterest.com', 'google.com', 'bit.ly', 'tinyurl.com'
         ];
@@ -94,6 +101,7 @@ const extractWebsites = async (page) => {
                     href.includes('tiktok.com') ||
                     href.includes('discord.gg') ||
                     href.includes('twitch.tv') ||
+                    href.includes('kick.com') ||
                     href.includes('reddit.com') ||
                     href.includes('linkedin.com') ||
                     href.includes('pinterest.com') ||
