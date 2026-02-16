@@ -1,6 +1,8 @@
 // specific constants for the scraper
 const BATCH_SIZE = 50;
 const WAIT_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const CONCURRENCY_LIMIT = 10; // Start with 10 parallel processing
+const RESOURCE_EXCLUSIONS = ['image', 'stylesheet', 'font', 'media']; // Block these to speed up
 
 // File extensions to exclude from email matching
 const FILE_EXTENSIONS = [
@@ -34,13 +36,14 @@ const PRIORITY_PATTERNS = [
 ];
 
 // Source strings for consistency
+// Source strings optimized for DB
 const SOURCES = {
-    YOUTUBE_PAGE: 'youtube_page',
+    YOUTUBE_PAGE: 'youtube', // User requested 'youtube'
     WEBSITE: 'website',
-    WEBSITE_MAIN: 'website_main',
-    WEBSITE_CONTACT: 'website_contact',
-    WEBSITE_MAILTO: 'website_mailto',
-    WEBSITE_HTML: 'website_html',
+    WEBSITE_MAIN: 'website',
+    WEBSITE_CONTACT: 'website',
+    WEBSITE_MAILTO: 'website',
+    WEBSITE_HTML: 'website',
     NOT_FOUND: 'NOT_FOUND',
     ERROR: 'error',
     BROWSER_ERROR: 'browser_error'
@@ -49,6 +52,8 @@ const SOURCES = {
 module.exports = {
     BATCH_SIZE,
     WAIT_INTERVAL,
+    CONCURRENCY_LIMIT,
+    RESOURCE_EXCLUSIONS,
     FILE_EXTENSIONS,
     EXCLUDED_DOMAINS,
     CONTACT_SELECTORS,
