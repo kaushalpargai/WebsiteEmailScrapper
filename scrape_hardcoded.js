@@ -1,5 +1,11 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
+const {
+    FILE_EXTENSIONS,
+    EXCLUDED_DOMAINS,
+    CONTACT_SELECTORS,
+    SOURCES
+} = require('./utils/constants');
 
 // --- HARDCODED CHANNEL LIST ---
 const CHANNEL_IDS = [
@@ -161,7 +167,7 @@ const isValidEmail = (text) => {
     const matches = text.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g);
     if (!matches) return null;
 
-    const fileExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.pdf', '.doc', '.docx', '.zip', '.rar', '.mp3', '.mp4', '.avi', '.mov', '.exe', '.dll', '.iso', '.dmg', '.apk'];
+    // const fileExtensions = FILE_EXTENSIONS; // Already imported
 
     const foundEmail = matches.find(e => {
         const lowerEmail = e.toLowerCase();
@@ -170,7 +176,7 @@ const isValidEmail = (text) => {
             !lowerEmail.includes('wix') &&
             !lowerEmail.includes('noreply') &&
             !lowerEmail.includes('no-reply') &&
-            !fileExtensions.some(ext => lowerEmail.includes(ext));
+            !FILE_EXTENSIONS.some(ext => lowerEmail.includes(ext));
     });
 
     if (foundEmail) {
@@ -185,12 +191,8 @@ const isValidWebsite = (url) => {
     try {
         const urlObj = new URL(url);
         const domain = urlObj.hostname || '';
-        const excludedDomains = [
-            'youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 'x.com', 'kick.com',
-            'instagram.com', 'tiktok.com', 'discord.gg', 'twitch.tv', 'reddit.com',
-            'linkedin.com', 'pinterest.com', 'google.com', 'bit.ly', 'tinyurl.com'
-        ];
-        return !excludedDomains.some(excluded => domain.includes(excluded));
+        // const excludedDomains = EXCLUDED_DOMAINS; // Already imported
+        return !EXCLUDED_DOMAINS.some(excluded => domain.includes(excluded));
     } catch {
         return false;
     }
@@ -244,13 +246,13 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
         try {
             const bodyText = await page.innerText('body').catch(() => '');
             let email = isValidEmail(bodyText);
-            if (email) return { email, foundVia: "website_main", website: websiteUrl };
+            if (email) return { email, foundVia: SOURCES.WEBSITE_MAIN, website: websiteUrl };
         } catch (e) { }
 
         // METHOD 2: Contact pages
         try {
-            const contactSelectors = ['a[href*="contact"]', 'a[href*="about"]', 'a:has-text("Contact")'];
-            for (const selector of contactSelectors) {
+            // const contactSelectors = CONTACT_SELECTORS; // Already imported
+            for (const selector of CONTACT_SELECTORS) {
                 try {
                     const links = await page.locator(selector).all();
                     for (let i = 0; i < Math.min(links.length, 1); i++) {
@@ -266,7 +268,7 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
                         await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { });
                         const contactText = await page.innerText('body').catch(() => '');
                         const email = isValidEmail(contactText);
-                        if (email) return { email, foundVia: "website_contact", website: websiteUrl };
+                        if (email) return { email, foundVia: SOURCES.WEBSITE_CONTACT, website: websiteUrl };
                     }
                 } catch (e) { }
             }
@@ -277,7 +279,7 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
             const mailto = await page.getAttribute('a[href^="mailto:"]', 'href').catch(() => null);
             if (mailto) {
                 const email = isValidEmail(mailto);
-                if (email) return { email, foundVia: "website_mailto", website: websiteUrl };
+                if (email) return { email, foundVia: SOURCES.WEBSITE_MAILTO, website: websiteUrl };
             }
         } catch (e) { }
 
@@ -348,7 +350,7 @@ const scrapeWebsiteForEmail = async (browser, websiteUrl) => {
             if (emailMatch) {
                 foundEmail = isValidEmail(emailMatch[0]);
                 if (foundEmail) {
-                    source = 'youtube_page';
+                    source = SOURCES.YOUTUBE_PAGE;
                     console.log(`   ✅ Email found on YouTube: ${foundEmail}`);
                 }
             }
